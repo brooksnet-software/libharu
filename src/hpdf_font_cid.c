@@ -149,7 +149,17 @@ HPDF_Type0Font_New  (HPDF_MMgr        mmgr,
 	 */
         if (HPDF_StrCmp(encoder_attr->ordering, "Identity-H") == 0) {
 	    ret += HPDF_Dict_AddName (font, "Encoding", "Identity-H");
-	    attr->cmap_stream = CreateCMap (encoder, xref);
+
+	    if (encoder->encode_text_fn != NULL) {
+		/* UTF-8 encoder: use the CID == GID scheme so that
+		 * supplementary-plane characters can be addressed. The
+		 * ToUnicode CMap is filled in at write time from the glyphs
+		 * actually used (see CIDFontType2_BeforeWrite_Func). */
+		attr->is_unicode_gid = HPDF_TRUE;
+		attr->cmap_stream = HPDF_DictStream_New (mmgr, xref);
+	    } else {
+		attr->cmap_stream = CreateCMap (encoder, xref);
+	    }
 
 	    if (attr->cmap_stream) {
 	        ret += HPDF_Dict_Add (font, "ToUnicode", attr->cmap_stream);
@@ -200,8 +210,12 @@ OnFree_Func  (HPDF_Dict  obj)
 
     HPDF_PTRACE ((" HPDF_Type0Font_OnFree\n"));
 
-    if (attr)
+    if (attr) {
+        if (attr->gid_to_unicode)
+            HPDF_FreeMem (obj->mmgr, attr->gid_to_unicode);
+
         HPDF_FreeMem (obj->mmgr, attr);
+    }
 }
 
 static HPDF_Font
@@ -354,7 +368,7 @@ CIDFontType2_New (HPDF_Font parent, HPDF_Xref xref)
     HPDF_Font font;
     HPDF_Array array;
     HPDF_UINT i;
-    HPDF_UNICODE tmp_map[65536];
+    HPDF_UINT16 *tmp_map = NULL;
     HPDF_Dict cid_system_info;
 
     HPDF_UINT16 max = 0;
@@ -388,10 +402,45 @@ CIDFontType2_New (HPDF_Font parent, HPDF_Xref xref)
     ret += HPDF_Array_AddNumber (array, (HPDF_INT32)(fontdef->font_bbox.bottom -
                 fontdef->font_bbox.top));
 
-    HPDF_MemSet (tmp_map, 0, sizeof(HPDF_UNICODE) * 65536);
-
     if (ret != HPDF_OK)
         return NULL;
+
+    if (attr->is_unicode_gid) {
+        /* UTF-8 path: CID == GID. The CIDToGIDMap is therefore the identity
+         * mapping, and the W array and ToUnicode CMap are generated at write
+         * time (CIDFontType2_BeforeWrite_Func) from the glyphs actually used,
+         * so that supplementary-plane glyphs (CID/GID > BMP code points) are
+         * handled without a 65536-entry table. */
+        if ((ret = HPDF_Dict_AddName (font, "CIDToGIDMap", "Identity"))
+                != HPDF_OK)
+            return NULL;
+
+        /* create CIDSystemInfo dictionary */
+        cid_system_info = HPDF_Dict_New (parent->mmgr);
+        if (!cid_system_info)
+            return NULL;
+
+        if (HPDF_Dict_Add (font, "CIDSystemInfo", cid_system_info) != HPDF_OK)
+            return NULL;
+
+        ret += HPDF_Dict_Add (cid_system_info, "Registry",
+                HPDF_String_New (parent->mmgr, encoder_attr->registry, NULL));
+        ret += HPDF_Dict_Add (cid_system_info, "Ordering",
+                HPDF_String_New (parent->mmgr, encoder_attr->ordering, NULL));
+        ret += HPDF_Dict_AddNumber (cid_system_info, "Supplement",
+                encoder_attr->suppliment);
+
+        if (ret != HPDF_OK)
+            return NULL;
+
+        return font;
+    }
+
+    tmp_map = HPDF_GetMem (font->mmgr, sizeof(HPDF_UINT16) * 65536);
+    if (!tmp_map)
+        return NULL;
+
+    HPDF_MemSet (tmp_map, 0, sizeof(HPDF_UINT16) * 65536);
 
     for (i = 0; i < 256; i++) {
         HPDF_UINT j;
@@ -420,66 +469,93 @@ CIDFontType2_New (HPDF_Font parent, HPDF_Xref xref)
 
     if (max > 0) {
         HPDF_INT16 dw = fontdef->missing_width;
-        HPDF_UNICODE *ptmp_map = tmp_map;
+        HPDF_UINT16 *ptmp_map = tmp_map;
         HPDF_Array tmp_array = NULL;
 
         /* add 'W' element */
         array = HPDF_Array_New (font->mmgr);
-        if (!array)
+        if (!array) {
+            HPDF_FreeMem (font->mmgr, tmp_map);
             return NULL;
+        }
 
-        if (HPDF_Dict_Add (font, "W", array) != HPDF_OK)
+        if (HPDF_Dict_Add (font, "W", array) != HPDF_OK) {
+            HPDF_FreeMem (font->mmgr, tmp_map);
             return NULL;
+        }
 
         for (i = 0; i < max; i++, ptmp_map++) {
             HPDF_INT w = HPDF_TTFontDef_GetGidWidth (fontdef, *ptmp_map);
 
             if (w != dw) {
                 if (!tmp_array) {
-                    if (HPDF_Array_AddNumber (array, i) != HPDF_OK)
+                    if (HPDF_Array_AddNumber (array, i) != HPDF_OK) {
+                        HPDF_FreeMem (font->mmgr, tmp_map);
                         return NULL;
+                    }
 
                     tmp_array = HPDF_Array_New (font->mmgr);
-                    if (!tmp_array)
+                    if (!tmp_array) {
+                        HPDF_FreeMem (font->mmgr, tmp_map);
                         return NULL;
+                    }
 
-                    if (HPDF_Array_Add (array, tmp_array) != HPDF_OK)
+                    if (HPDF_Array_Add (array, tmp_array) != HPDF_OK) {
+                        HPDF_FreeMem (font->mmgr, tmp_map);
                         return NULL;
+                    }
                 }
 
-                if ((ret = HPDF_Array_AddNumber (tmp_array, w)) != HPDF_OK)
+                if ((ret = HPDF_Array_AddNumber (tmp_array, w)) != HPDF_OK) {
+                    HPDF_FreeMem (font->mmgr, tmp_map);
                     return NULL;
+                }
             } else
                   tmp_array = NULL;
         }
 
         /* create "CIDToGIDMap" data */
         if (fontdef_attr->embedding) {
+            HPDF_BYTE *gidmap;
+
             attr->map_stream = HPDF_DictStream_New (font->mmgr, xref);
-            if (!attr->map_stream)
+            if (!attr->map_stream) {
+                HPDF_FreeMem (font->mmgr, tmp_map);
                 return NULL;
-
-            if (HPDF_Dict_Add (font, "CIDToGIDMap", attr->map_stream) != HPDF_OK)
-                return NULL;
-
-            for (i = 0; i < max; i++) {
-                HPDF_BYTE u[2];
-                HPDF_UINT16 gid = tmp_map[i];
-
-                u[0] = (HPDF_BYTE)(gid >> 8);
-                u[1] = (HPDF_BYTE)gid;
-
-                HPDF_MemCpy ((HPDF_BYTE *)(tmp_map + i), u, 2);
             }
 
-            if ((ret = HPDF_Stream_Write (attr->map_stream->stream,
-                            (HPDF_BYTE *)tmp_map, max * 2)) != HPDF_OK)
+            if (HPDF_Dict_Add (font, "CIDToGIDMap", attr->map_stream) != HPDF_OK) {
+                HPDF_FreeMem (font->mmgr, tmp_map);
                 return NULL;
+            }
+
+            gidmap = HPDF_GetMem (font->mmgr, (HPDF_UINT)max * 2);
+            if (!gidmap) {
+                HPDF_FreeMem (font->mmgr, tmp_map);
+                return NULL;
+            }
+
+            for (i = 0; i < max; i++) {
+                gidmap[i * 2]     = (HPDF_BYTE)(tmp_map[i] >> 8);
+                gidmap[i * 2 + 1] = (HPDF_BYTE)tmp_map[i];
+            }
+
+            ret = HPDF_Stream_Write (attr->map_stream->stream, gidmap,
+                            (HPDF_UINT)max * 2);
+            HPDF_FreeMem (font->mmgr, gidmap);
+
+            if (ret != HPDF_OK) {
+                HPDF_FreeMem (font->mmgr, tmp_map);
+                return NULL;
+            }
         }
     } else {
+        HPDF_FreeMem (font->mmgr, tmp_map);
         HPDF_SetError (font->error, HPDF_INVALID_FONTDEF_DATA, 0);
         return 0;
     }
+
+    HPDF_FreeMem (font->mmgr, tmp_map);
 
     /* create CIDSystemInfo dictionary */
     cid_system_info = HPDF_Dict_New (parent->mmgr);
@@ -503,6 +579,234 @@ CIDFontType2_New (HPDF_Font parent, HPDF_Xref xref)
 }
 
 
+/*
+ * Encode UTF-8 text for the CID == GID scheme: each code point is mapped to
+ * its glyph id via the font's cmap and written to the content stream as a
+ * 2-byte (big-endian) code. The (gid, code point) pairing is recorded so a
+ * ToUnicode CMap can be produced later. This is what lets supplementary-plane
+ * characters be drawn -- a glyph id always fits in 16 bits even when its code
+ * point does not.
+ */
+HPDF_STATUS
+HPDF_Type0Font_WriteText  (HPDF_Font     font,
+                           const char   *text,
+                           HPDF_UINT     len,
+                           HPDF_Stream   stream)
+{
+    HPDF_FontAttr attr = (HPDF_FontAttr)font->attr;
+    HPDF_Encoder encoder = attr->encoder;
+    HPDF_FontDef fontdef = attr->fontdef;
+    HPDF_TTFontDefAttr def_attr = (HPDF_TTFontDefAttr)fontdef->attr;
+    HPDF_ParseText_Rec parse_state;
+    HPDF_BYTE buf[HPDF_TEXT_DEFAULT_LEN];
+    HPDF_UINT buf_len = 0;
+    HPDF_UINT i;
+    HPDF_STATUS ret;
+
+    HPDF_PTRACE ((" HPDF_Type0Font_WriteText\n"));
+
+    if (!attr->gid_to_unicode) {
+        attr->gid_to_unicode = HPDF_GetMem (font->mmgr,
+                sizeof(HPDF_UNICODE) * def_attr->num_glyphs);
+        if (!attr->gid_to_unicode)
+            return HPDF_Error_GetCode (font->error);
+        HPDF_MemSet (attr->gid_to_unicode, 0,
+                sizeof(HPDF_UNICODE) * def_attr->num_glyphs);
+    }
+
+    HPDF_Encoder_SetParseText (encoder, &parse_state, (const HPDF_BYTE *)text,
+            len);
+
+    for (i = 0; i < len; i++) {
+        HPDF_ByteType btype = HPDF_Encoder_ByteType (encoder, &parse_state);
+
+        if (btype != HPDF_BYTE_TYPE_TRAIL) {
+            HPDF_UNICODE cp = HPDF_Encoder_ToUnicode (encoder, 0);
+            HPDF_UINT16 gid = HPDF_TTFontDef_GetGlyphid (fontdef, cp);
+
+            /* mark the glyph (and any composite components) as used so that
+             * the embedded subset includes it */
+            HPDF_TTFontDef_GetCharWidth (fontdef, cp);
+
+            if (gid != 0 && gid < def_attr->num_glyphs)
+                attr->gid_to_unicode[gid] = cp;
+
+            if (buf_len + 2 > HPDF_TEXT_DEFAULT_LEN) {
+                if ((ret = HPDF_Stream_WriteBinary (stream, buf, buf_len, NULL))
+                        != HPDF_OK)
+                    return ret;
+                buf_len = 0;
+            }
+
+            buf[buf_len++] = (HPDF_BYTE)(gid >> 8);
+            buf[buf_len++] = (HPDF_BYTE)gid;
+        }
+    }
+
+    if (buf_len > 0) {
+        if ((ret = HPDF_Stream_WriteBinary (stream, buf, buf_len, NULL))
+                != HPDF_OK)
+            return ret;
+    }
+
+    return HPDF_OK;
+}
+
+
+static char*
+AppendHex16  (char *p, HPDF_UINT16 v)
+{
+    static const char H[] = "0123456789ABCDEF";
+
+    *p++ = H[(v >> 12) & 0xF];
+    *p++ = H[(v >> 8) & 0xF];
+    *p++ = H[(v >> 4) & 0xF];
+    *p++ = H[v & 0xF];
+
+    return p;
+}
+
+
+/* Build the 'W' (per-glyph width) array for the descendant CIDFont, keyed by
+ * glyph id, covering only the glyphs actually used. */
+static HPDF_STATUS
+CreateGidWidths  (HPDF_Font      descendant,
+                  HPDF_FontDef   fontdef,
+                  HPDF_BYTE     *flgs,
+                  HPDF_UINT      num_glyphs)
+{
+    HPDF_Array array;
+    HPDF_Array sub_array = NULL;
+    HPDF_INT16 dw = fontdef->missing_width;
+    HPDF_UINT i;
+    HPDF_STATUS ret = 0;
+
+    array = HPDF_Array_New (descendant->mmgr);
+    if (!array)
+        return HPDF_Error_GetCode (descendant->error);
+
+    if ((ret = HPDF_Dict_Add (descendant, "W", array)) != HPDF_OK)
+        return ret;
+
+    for (i = 0; i < num_glyphs; i++) {
+        if (flgs[i]) {
+            HPDF_INT16 w = HPDF_TTFontDef_GetGidWidth (fontdef, (HPDF_UINT16)i);
+
+            if (w != dw) {
+                if (!sub_array) {
+                    ret += HPDF_Array_AddNumber (array, i);
+                    sub_array = HPDF_Array_New (descendant->mmgr);
+                    if (!sub_array)
+                        return HPDF_Error_GetCode (descendant->error);
+                    ret += HPDF_Array_Add (array, sub_array);
+                }
+                ret += HPDF_Array_AddNumber (sub_array, w);
+            } else
+                sub_array = NULL;
+        } else
+            sub_array = NULL;
+    }
+
+    return ret;
+}
+
+
+/* Build a ToUnicode CMap that maps each used glyph id (== CID) back to its
+ * Unicode code point, emitting surrogate pairs for code points above U+FFFF
+ * so that text extraction and search work for the whole Unicode range. */
+static HPDF_STATUS
+CreateToUnicodeCMap  (HPDF_Stream    stream,
+                      HPDF_UNICODE  *gid_to_unicode,
+                      HPDF_BYTE     *flgs,
+                      HPDF_UINT      num_glyphs)
+{
+    HPDF_STATUS ret = 0;
+    HPDF_UINT i;
+    HPDF_UINT n_used = 0;
+    HPDF_UINT block;
+    char line[64];
+
+    ret += HPDF_Stream_WriteStr (stream,
+            "/CIDInit /ProcSet findresource begin\r\n"
+            "12 dict begin\r\n"
+            "begincmap\r\n"
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) "
+            "/Supplement 0 >> def\r\n"
+            "/CMapName /Adobe-Identity-UCS def\r\n"
+            "/CMapType 2 def\r\n"
+            "1 begincodespacerange\r\n<0000> <FFFF>\r\nendcodespacerange\r\n");
+
+    if (gid_to_unicode) {
+        for (i = 0; i < num_glyphs; i++)
+            if (flgs[i] && gid_to_unicode[i] != 0)
+                n_used++;
+    }
+
+    /* beginbfchar blocks are limited to 100 entries each */
+    i = 0;
+    block = 0;
+    while (gid_to_unicode && block < n_used) {
+        HPDF_UINT count = n_used - block;
+        HPDF_UINT k;
+
+        if (count > 100)
+            count = 100;
+
+        HPDF_IToA (line, count, line + sizeof(line) - 1);
+        ret += HPDF_Stream_WriteStr (stream, line);
+        ret += HPDF_Stream_WriteStr (stream, " beginbfchar\r\n");
+
+        for (k = 0; k < count; ) {
+            while (i < num_glyphs &&
+                    !(flgs[i] && gid_to_unicode[i] != 0))
+                i++;
+
+            if (i >= num_glyphs)
+                break;
+
+            {
+                HPDF_UNICODE cp = gid_to_unicode[i];
+                char *p = line;
+
+                *p++ = '<';
+                p = AppendHex16 (p, (HPDF_UINT16)i);
+                *p++ = '>';
+                *p++ = ' ';
+                *p++ = '<';
+
+                if (cp > 0xFFFF) {
+                    HPDF_UINT32 u = cp - 0x10000;
+                    p = AppendHex16 (p, (HPDF_UINT16)(0xD800 + (u >> 10)));
+                    p = AppendHex16 (p, (HPDF_UINT16)(0xDC00 + (u & 0x3FF)));
+                } else {
+                    p = AppendHex16 (p, (HPDF_UINT16)cp);
+                }
+
+                *p++ = '>';
+                *p++ = '\r';
+                *p++ = '\n';
+                *p = 0;
+
+                ret += HPDF_Stream_WriteStr (stream, line);
+            }
+
+            i++;
+            k++;
+        }
+
+        ret += HPDF_Stream_WriteStr (stream, "endbfchar\r\n");
+        block += count;
+    }
+
+    ret += HPDF_Stream_WriteStr (stream,
+            "endcmap\r\n"
+            "CMapName currentdict /CMap defineresource pop\r\n"
+            "end\r\nend\r\n");
+
+    return ret;
+}
+
+
 static HPDF_STATUS
 CIDFontType2_BeforeWrite_Func  (HPDF_Dict obj)
 {
@@ -518,6 +822,24 @@ CIDFontType2_BeforeWrite_Func  (HPDF_Dict obj)
 
     if (font_attr->cmap_stream)
         font_attr->cmap_stream->filter = obj->filter;
+
+    /* For the CID == GID (UTF-8) scheme, the per-glyph width array and the
+     * ToUnicode CMap are generated here, once all text has been drawn and the
+     * set of used glyphs is known. */
+    if (font_attr->is_unicode_gid && !font_attr->unicode_meta_written) {
+        if ((ret = CreateGidWidths (font_attr->descendant_font, def,
+                def_attr->glyph_tbl.flgs, def_attr->num_glyphs)) != HPDF_OK)
+            return ret;
+
+        if (font_attr->cmap_stream) {
+            if ((ret = CreateToUnicodeCMap (font_attr->cmap_stream->stream,
+                    font_attr->gid_to_unicode, def_attr->glyph_tbl.flgs,
+                    def_attr->num_glyphs)) != HPDF_OK)
+                return ret;
+        }
+
+        font_attr->unicode_meta_written = HPDF_TRUE;
+    }
 
     if (!font_attr->fontdef->descriptor) {
         HPDF_Dict descriptor = HPDF_Dict_New (obj->mmgr);

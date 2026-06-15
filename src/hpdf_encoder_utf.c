@@ -146,9 +146,9 @@ UTF8_Encoder_ToUnicode_Func  (HPDF_Encoder   encoder,
 
     switch (utf8_attr->end_byte) {
     case 3:
-	val = (unsigned int) ((utf8_attr->utf8_bytes[0] & 0x7) << 18) +
-	    (unsigned int) ((utf8_attr->utf8_bytes[1]) << 12)       +
-	    (unsigned int) ((utf8_attr->utf8_bytes[2] & 0x3f) << 6) +
+	val = (unsigned int) ((utf8_attr->utf8_bytes[0] & 0x7) << 18)  +
+	    (unsigned int) ((utf8_attr->utf8_bytes[1] & 0x3f) << 12)   +
+	    (unsigned int) ((utf8_attr->utf8_bytes[2] & 0x3f) << 6)    +
 	    (unsigned int) ((utf8_attr->utf8_bytes[3] & 0x3f));
 	break;
     case 2:
@@ -167,9 +167,9 @@ UTF8_Encoder_ToUnicode_Func  (HPDF_Encoder   encoder,
 	val = 32; // Unknown character
     }
 
-    if (val > 65535) //Convert everything outside UCS-2 to space
-        val = 32;
-
+    /* val now holds the full Unicode scalar value, including code points
+     * above U+FFFF (supplementary planes). HPDF_UNICODE is 32-bit so it is
+     * returned unmodified. */
     return val;
 }
 
@@ -194,9 +194,21 @@ UTF8_Encoder_EncodeText_Func  (HPDF_Encoder        encoder,
 	if (btype != HPDF_BYTE_TYPE_TRAIL) {
 	    tmp_unicode = HPDF_Encoder_ToUnicode (encoder, 0);
 
-	    HPDF_UInt16Swap (&tmp_unicode);
-	    HPDF_MemCpy ((HPDF_BYTE *)c, (const HPDF_BYTE*)&tmp_unicode, 2);
-	    c += 2;
+	    /* output UTF-16BE, using a surrogate pair for code points above
+	     * U+FFFF */
+	    if (tmp_unicode > 0xFFFF) {
+		HPDF_UINT32 u = (HPDF_UINT32)tmp_unicode - 0x10000;
+		HPDF_UINT16 hi = (HPDF_UINT16)(0xD800 + (u >> 10));
+		HPDF_UINT16 lo = (HPDF_UINT16)(0xDC00 + (u & 0x3FF));
+
+		*c++ = (char)(hi >> 8);
+		*c++ = (char)hi;
+		*c++ = (char)(lo >> 8);
+		*c++ = (char)lo;
+	    } else {
+		*c++ = (char)(tmp_unicode >> 8);
+		*c++ = (char)tmp_unicode;
+	    }
         }
     }
 

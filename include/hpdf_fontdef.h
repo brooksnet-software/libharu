@@ -230,6 +230,12 @@ typedef struct _HPDF_TTF_CmapRange {
         HPDF_UINT16  *id_range_offset;
         HPDF_UINT16  *glyph_id_array;
         HPDF_UINT     glyph_id_array_count;
+
+        /* format 12 (segmented coverage, supports code points above U+FFFF) */
+        HPDF_UINT32   group_count;
+        HPDF_UINT32  *fmt12_start_char;   /* startCharCode of each group  */
+        HPDF_UINT32  *fmt12_end_char;     /* endCharCode of each group    */
+        HPDF_UINT32  *fmt12_start_gid;    /* startGlyphID of each group   */
 } HPDF_TTF_CmapRange;
 
 
@@ -337,12 +343,12 @@ HPDF_TTFontDef_Load2  (HPDF_MMgr     mmgr,
 
 HPDF_UINT16
 HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
-                            HPDF_UINT16    unicode);
+                            HPDF_UNICODE   unicode);
 
 
 HPDF_INT16
 HPDF_TTFontDef_GetCharWidth  (HPDF_FontDef   fontdef,
-                              HPDF_UINT16    unicode);
+                              HPDF_UNICODE   unicode);
 
 
 HPDF_INT16

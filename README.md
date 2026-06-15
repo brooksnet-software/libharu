@@ -27,6 +27,45 @@ You can add the feature of PDF creation by using Haru without understanding
 complicated internal structure of PDF.
 
 
+# Unicode (UTF-8) text
+
+Haru can render UTF-8 encoded text across the full Unicode range, including
+supplementary-plane characters above U+FFFF (mathematical alphanumerics,
+emoji, rare CJK, etc.). Use a TrueType font together with the built-in
+`"UTF-8"` encoding:
+
+```c
+HPDF_UseUTFEncodings (pdf);                 /* register the UTF-8 encoder   */
+
+/* load a .ttf file ...                                                     */
+name = HPDF_LoadTTFontFromFile (pdf, "font.ttf", HPDF_TRUE /* embed */);
+/* ... or pick a face from a .ttc collection by index:                     */
+name = HPDF_LoadTTFontFromFile2 (pdf, "fonts.ttc", 0, HPDF_TRUE);
+
+font = HPDF_GetFont (pdf, name, "UTF-8");
+HPDF_Page_SetFontAndSize (page, font, 18);
+HPDF_Page_ShowText (page, "Привет, Κόσμε, 日本語");  /* raw UTF-8 bytes */
+```
+
+Embedding the font (`HPDF_TRUE`) is recommended so the glyphs are present in
+every viewer. The font must contain glyphs for the characters you use; the
+14 built-in (base) fonts only cover single-byte encodings. Characters above
+`U+FFFF` additionally require the font to have a `cmap` format 12 sub-table
+(most modern fonts do). See `demo/utf_demo.c` for a complete example.
+
+Under the hood the Type0 font uses the convention CID = glyph id, so glyphs
+whose code points exceed the 16-bit CID space are still addressable; an
+embedded subset and a `ToUnicode` CMap (with surrogate pairs for code points
+above `U+FFFF`) are generated automatically so text remains searchable and
+copyable.
+
+Limitations (libHaru performs no complex text layout):
+
+ * There is no bidirectional reordering and no contextual shaping, so
+   right-to-left scripts (Arabic, Hebrew) and Indic scripts will not render
+   correctly unless you reorder/shape the text yourself before drawing it.
+
+
 # The differences from the previous version 
 
 

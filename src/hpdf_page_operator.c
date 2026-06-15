@@ -2375,7 +2375,12 @@ InternalWriteText  (HPDF_PageAttr      attr,
         encoder = font_attr->encoder;
         len = HPDF_StrLen (text, HPDF_LIMIT_MAX_STRING_LEN);
 
-        if (encoder->encode_text_fn == NULL) {
+        if (font_attr->is_unicode_gid) {
+	    /* CID == GID scheme: map UTF-8 to glyph ids (full Unicode range) */
+	    if ((ret = HPDF_Type0Font_WriteText (attr->gstate->font, text, len,
+						 attr->stream)) != HPDF_OK)
+		return ret;
+        } else if (encoder->encode_text_fn == NULL) {
 	    if ((ret = HPDF_Stream_WriteBinary (attr->stream, (HPDF_BYTE *)text,
 						len, NULL))
 		!= HPDF_OK)
@@ -2657,7 +2662,12 @@ InternalShowTextNextLine  (HPDF_Page    page,
         if ((ret = HPDF_Stream_WriteStr (attr->stream, "<")) != HPDF_OK)
             return ret;
 
-        if (encoder->encode_text_fn == NULL) {
+        if (font_attr->is_unicode_gid) {
+	    /* CID == GID scheme: map UTF-8 to glyph ids (full Unicode range) */
+	    if ((ret = HPDF_Type0Font_WriteText (attr->gstate->font, text, len,
+						 attr->stream)) != HPDF_OK)
+		return ret;
+        } else if (encoder->encode_text_fn == NULL) {
 	    if ((ret = HPDF_Stream_WriteBinary (attr->stream, (HPDF_BYTE *)text,
 						len, NULL))
 		!= HPDF_OK)

@@ -30,6 +30,7 @@ set(
     text_annotation
     ttfont_demo
     ttfont_demo_jp
+    utf_demo
 )
 
 set(
@@ -80,6 +81,20 @@ target_link_libraries(grid_sheet PUBLIC hpdf)
     target_link_libraries(grid_sheet PUBLIC m)
   endif()
 set_target_properties(grid_sheet PROPERTIES COMPILE_FLAGS "${DEMO_C_FLAGS} -DSTAND_ALONE")
+
+# svg_demo renders an SVG into a PDF as vectors. It needs the bundled,
+# zlib-licensed nanosvg.h single-header parser; build it only when present.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nanosvg.h")
+  add_executable(svg_demo svg_demo.c)
+  target_link_libraries(svg_demo PUBLIC hpdf)
+  target_include_directories(svg_demo PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(svg_demo PUBLIC m)
+  endif()
+  if(DEMO_C_FLAGS)
+    set_target_properties(svg_demo PROPERTIES COMPILE_FLAGS ${DEMO_C_FLAGS})
+  endif()
+endif()
 
 # =======================================================================
 # install demo source, demo executables and other files

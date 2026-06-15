@@ -151,7 +151,9 @@ HPDF_String_Write  (HPDF_String   obj,
             HPDF_ByteType btype = HPDF_Encoder_ByteType (obj->encoder,
                     &parse_state);
 
-            if (tmp_len >= HPDF_TEXT_DEFAULT_LEN - 1) {
+            /* a single code point may need two UTF-16 code units (4 bytes)
+             * when it is a surrogate pair, so keep two units of headroom */
+            if (tmp_len >= HPDF_TEXT_DEFAULT_LEN - 2) {
                 if ((ret = HPDF_Stream_WriteBinary (stream, buf,
                             tmp_len * 2, e)) != HPDF_OK)
                     return ret;
@@ -171,10 +173,23 @@ HPDF_String_Write  (HPDF_String   obj,
                     tmp_unicode = HPDF_Encoder_ToUnicode (obj->encoder, b);
                 }
 
-                HPDF_UInt16Swap (&tmp_unicode);
-                HPDF_MemCpy (pbuf, (HPDF_BYTE*)&tmp_unicode, 2);
-                pbuf += 2;
-                tmp_len++;
+                /* output UTF-16BE, encoding code points above U+FFFF as a
+                 * surrogate pair */
+                if (tmp_unicode > 0xFFFF) {
+                    HPDF_UINT32 u = (HPDF_UINT32)tmp_unicode - 0x10000;
+                    HPDF_UINT16 hi = (HPDF_UINT16)(0xD800 + (u >> 10));
+                    HPDF_UINT16 lo = (HPDF_UINT16)(0xDC00 + (u & 0x3FF));
+
+                    *pbuf++ = (HPDF_BYTE)(hi >> 8);
+                    *pbuf++ = (HPDF_BYTE)hi;
+                    *pbuf++ = (HPDF_BYTE)(lo >> 8);
+                    *pbuf++ = (HPDF_BYTE)lo;
+                    tmp_len += 2;
+                } else {
+                    *pbuf++ = (HPDF_BYTE)(tmp_unicode >> 8);
+                    *pbuf++ = (HPDF_BYTE)tmp_unicode;
+                    tmp_len++;
+                }
             }
         }
 

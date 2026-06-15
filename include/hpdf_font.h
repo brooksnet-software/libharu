@@ -82,6 +82,16 @@ typedef struct _HPDF_FontAttr_Rec {
     HPDF_Font                   descendant_font;
     HPDF_Dict                   map_stream;
     HPDF_Dict                   cmap_stream;
+
+    /* For a Type0 TrueType font driven by the UTF-8 encoder we use the
+     * convention CID == GID, which lets us reference glyphs above the BMP
+     * (whose code points exceed the 16-bit CID space). This array records,
+     * for each glyph actually used, the Unicode code point it was drawn from,
+     * so a per-glyph ToUnicode CMap can be emitted. Indexed by glyph id,
+     * allocated lazily and sized to the font's glyph count; 0 means unused. */
+    HPDF_UNICODE               *gid_to_unicode;
+    HPDF_BOOL                   is_unicode_gid;  /* uses the CID==GID scheme */
+    HPDF_BOOL                   unicode_meta_written; /* W/ToUnicode emitted */
 } HPDF_FontAttr_Rec;
 
 
@@ -106,6 +116,15 @@ HPDF_Type0Font_New  (HPDF_MMgr        mmgr,
 
 HPDF_BOOL
 HPDF_Font_Validate  (HPDF_Font font);
+
+
+/* Encode UTF-8 text as 2-byte glyph ids for a Type0 TrueType font that uses
+ * the CID == GID scheme, writing the result to the content stream. */
+HPDF_STATUS
+HPDF_Type0Font_WriteText  (HPDF_Font     font,
+                           const char   *text,
+                           HPDF_UINT     len,
+                           HPDF_Stream   stream);
 
 #ifdef __cplusplus
 }

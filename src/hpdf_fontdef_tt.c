@@ -137,6 +137,11 @@ ParseCMAP_format4  (HPDF_FontDef  fontdef,
 
 
 static HPDF_STATUS
+ParseCMAP_format12  (HPDF_FontDef  fontdef,
+                     HPDF_UINT32   offset);
+
+
+static HPDF_STATUS
 ParseHmtx  (HPDF_FontDef  fontdef);
 
 
@@ -229,6 +234,15 @@ InitAttr (HPDF_FontDef  fontdef)
 
         if (attr->cmap.glyph_id_array)
             HPDF_FreeMem (fontdef->mmgr, attr->cmap.glyph_id_array);
+
+        if (attr->cmap.fmt12_start_char)
+            HPDF_FreeMem (fontdef->mmgr, attr->cmap.fmt12_start_char);
+
+        if (attr->cmap.fmt12_end_char)
+            HPDF_FreeMem (fontdef->mmgr, attr->cmap.fmt12_end_char);
+
+        if (attr->cmap.fmt12_start_gid)
+            HPDF_FreeMem (fontdef->mmgr, attr->cmap.fmt12_start_gid);
 
         if (attr->offset_tbl.table)
             HPDF_FreeMem (fontdef->mmgr, attr->offset_tbl.table);
@@ -887,6 +901,7 @@ ParseCMap (HPDF_FontDef  fontdef)
     HPDF_UINT i;
     HPDF_UINT32 ms_unicode_encoding_offset = 0;
     HPDF_UINT32 byte_encoding_offset = 0;
+    HPDF_UINT32 fmt12_encoding_offset = 0;
 
     HPDF_PTRACE ((" HPDF_TTFontDef_ParseCMap\n"));
 
@@ -938,11 +953,18 @@ ParseCMap (HPDF_FontDef  fontdef)
                         "encodingID=%u format=%u offset=%u\n", i, platformID,
                         encodingID, format, (HPDF_UINT)offset));
 
-        /* MS-Unicode-CMAP is used for priority */
-        if (platformID == 3 && encodingID == 1 && format == 4) {
+        /* Format 12 (segmented coverage) has the highest priority because it
+         * is the only Unicode sub-table that can map code points above
+         * U+FFFF. MS uses platform 3 / encoding 10; Apple uses platform 0 /
+         * encoding 4 or 6. */
+        if (format == 12 &&
+                ((platformID == 3 && encodingID == 10) ||
+                 (platformID == 0 && (encodingID == 4 || encodingID == 6))))
+            fmt12_encoding_offset = offset;
+
+        /* MS-Unicode-CMAP (BMP only) */
+        if (platformID == 3 && encodingID == 1 && format == 4)
             ms_unicode_encoding_offset = offset;
-            break;
-        }
 
         /* Byte-Encoding-CMAP will be used if MS-Unicode-CMAP is not found */
         if (platformID == 1 && encodingID ==0 && format == 1)
@@ -952,17 +974,18 @@ ParseCMap (HPDF_FontDef  fontdef)
          *  For example: Helvetica.ttc has platformID == 0 and encodingID == 1;
          *  HelveticaNeue.tcc has platformID == 0 and encodingID == 3
          */
-        if (platformID == 0 && (encodingID == 1 || encodingID == 3) && format == 4) {
+        if (platformID == 0 && (encodingID == 1 || encodingID == 3) && format == 4)
             ms_unicode_encoding_offset = offset;
-            break;
-        }
 
         ret = HPDF_Stream_Seek (attr->stream, save_offset, HPDF_SEEK_SET);
         if (ret != HPDF_OK)
            return ret;
     }
 
-    if (ms_unicode_encoding_offset != 0) {
+    if (fmt12_encoding_offset != 0) {
+        HPDF_PTRACE((" found unicode cmap format 12.\n"));
+        ret = ParseCMAP_format12(fontdef, fmt12_encoding_offset + tbl->offset);
+    } else if (ms_unicode_encoding_offset != 0) {
         HPDF_PTRACE((" found microsoft unicode cmap.\n"));
         ret = ParseCMAP_format4(fontdef, ms_unicode_encoding_offset +
                 tbl->offset);
@@ -1147,9 +1170,65 @@ ParseCMAP_format4  (HPDF_FontDef  fontdef,
 }
 
 
+static HPDF_STATUS
+ParseCMAP_format12  (HPDF_FontDef  fontdef,
+                     HPDF_UINT32   offset)
+{
+    HPDF_TTFontDefAttr attr = (HPDF_TTFontDefAttr)fontdef->attr;
+    HPDF_STATUS ret;
+    HPDF_UINT32 length32;
+    HPDF_UINT32 language32;
+    HPDF_UINT32 n_groups;
+    HPDF_UINT16 reserved;
+    HPDF_UINT32 i;
+
+    HPDF_PTRACE((" ParseCMAP_format12\n"));
+
+    ret = HPDF_Stream_Seek (attr->stream, offset, HPDF_SEEK_SET);
+    if (ret != HPDF_OK)
+        return ret;
+
+    ret += GetUINT16 (attr->stream, &attr->cmap.format);
+    ret += GetUINT16 (attr->stream, &reserved);
+    ret += GetUINT32 (attr->stream, &length32);
+    ret += GetUINT32 (attr->stream, &language32);
+    ret += GetUINT32 (attr->stream, &n_groups);
+
+    if (ret != HPDF_OK)
+        return HPDF_Error_GetCode (fontdef->error);
+
+    if (attr->cmap.format != 12 || n_groups == 0)
+        return HPDF_SetError (fontdef->error, HPDF_TTF_INVALID_FOMAT, 0);
+
+    attr->cmap.language = (HPDF_UINT16)language32;
+    attr->cmap.group_count = n_groups;
+
+    attr->cmap.fmt12_start_char =
+        HPDF_GetMem (fontdef->mmgr, sizeof(HPDF_UINT32) * n_groups);
+    attr->cmap.fmt12_end_char =
+        HPDF_GetMem (fontdef->mmgr, sizeof(HPDF_UINT32) * n_groups);
+    attr->cmap.fmt12_start_gid =
+        HPDF_GetMem (fontdef->mmgr, sizeof(HPDF_UINT32) * n_groups);
+
+    if (!attr->cmap.fmt12_start_char || !attr->cmap.fmt12_end_char ||
+            !attr->cmap.fmt12_start_gid)
+        return HPDF_Error_GetCode (fontdef->error);
+
+    for (i = 0; i < n_groups; i++) {
+        ret += GetUINT32 (attr->stream, &attr->cmap.fmt12_start_char[i]);
+        ret += GetUINT32 (attr->stream, &attr->cmap.fmt12_end_char[i]);
+        ret += GetUINT32 (attr->stream, &attr->cmap.fmt12_start_gid[i]);
+        if (ret != HPDF_OK)
+            return HPDF_Error_GetCode (fontdef->error);
+    }
+
+    return HPDF_OK;
+}
+
+
 HPDF_UINT16
 HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
-                            HPDF_UINT16    unicode)
+                            HPDF_UNICODE   unicode)
 {
     HPDF_TTFontDefAttr attr = (HPDF_TTFontDefAttr)fontdef->attr;
     HPDF_UINT16 *pend_count = attr->cmap.end_count;
@@ -1157,6 +1236,23 @@ HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
     HPDF_UINT i;
 
     HPDF_PTRACE((" HPDF_TTFontDef_GetGlyphid\n"));
+
+    /* format 12 (segmented coverage, full Unicode range) */
+    if (attr->cmap.format == 12) {
+        for (i = 0; i < attr->cmap.group_count; i++) {
+            if (unicode >= attr->cmap.fmt12_start_char[i] &&
+                    unicode <= attr->cmap.fmt12_end_char[i])
+                return (HPDF_UINT16)(attr->cmap.fmt12_start_gid[i] +
+                        (unicode - attr->cmap.fmt12_start_char[i]));
+        }
+        HPDF_PTRACE((" HPDF_TTFontDef_GetGlyphid undefined char(0x%X)\n",
+                    unicode));
+        return 0;
+    }
+
+    /* format 4 and below address the BMP only */
+    if (unicode > 0xFFFF)
+        return 0;
 
     /* format 0 */
     if (attr->cmap.format == 0) {
@@ -1214,7 +1310,7 @@ HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
 
 HPDF_INT16
 HPDF_TTFontDef_GetCharWidth  (HPDF_FontDef   fontdef,
-                              HPDF_UINT16    unicode)
+                              HPDF_UNICODE   unicode)
 {
     HPDF_UINT16 advance_width;
     HPDF_TTF_LongHorMetric hmetrics;

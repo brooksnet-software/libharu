@@ -40,3 +40,27 @@ CPackConfig.cmake
 CPackSourceConfig.cmake
 cmake_install.cmake
 depcomp
+
+# Local build trees & generated output
+/build/
+/build32/
+/x64/
+/win32/Win32/
+*.obj
+*.exe
+*.pdf
+
+# Vendored zlib copies (local Windows builds)
+/zlib-1.3.2/
+/zlib-Win32/
+/zlib-x64/
+
+# CMake-generated MSVC project files
+/win32/ALL_BUILD.vcxproj
+/win32/ALL_BUILD.vcxproj.filters
+/win32/INSTALL.vcxproj
+/win32/INSTALL.vcxproj.filters
+/win32/ZERO_CHECK.vcxproj
+/win32/ZERO_CHECK.vcxproj.filters
+/win32/libharu.sln
+/win32/src/

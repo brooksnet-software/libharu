@@ -94,10 +94,13 @@ typedef  signed int          HPDF_BOOL;
 typedef  unsigned long       HPDF_STATUS;
 
 
-/*  character-code type (16bit)
+/*  character-code type
  */
 typedef  HPDF_UINT16         HPDF_CID;
-typedef  HPDF_UINT16         HPDF_UNICODE;
+
+/* A Unicode scalar value (code point). Widened to 32 bits so that
+ * supplementary-plane characters (above U+FFFF) can be represented. */
+typedef  HPDF_UINT32         HPDF_UNICODE;
 
 
 /*  HPDF_Point struct
