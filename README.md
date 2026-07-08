@@ -6,6 +6,21 @@
 
   **Copyright 2007-2009 (c) Antony Dovgal et al.**
 
+---
+
+> ⚠️ **This is a modified fork of libHaru — not the original.**
+>
+> Maintained by **Brooks Internet Software, Inc.** It has been altered from
+> upstream libHaru **2.4.6** to add full **UTF-8 / Unicode** text support (plus a
+> Windows x64 build and an SVG demo). The original, unmodified libHaru is at
+> <https://github.com/libharu/libharu>.
+>
+> In accordance with clause 2 of the zlib/libpng license, this altered version is
+> plainly marked as such and must not be misrepresented as the original software.
+> The original copyright and license (see `LICENSE`) are retained unchanged.
+
+---
+
 See INSTALL for instructions on how to install libHaru.
 
 

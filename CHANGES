@@ -1,6 +1,13 @@
 libHaru news
 -------------------------------------------------------------------------------
 
+Modified fork (Brooks Internet Software, Inc.)
+- Forked from upstream libHaru 2.4.6 and altered to add full UTF-8 / Unicode text
+  support, a Windows x64 build, and an SVG demo. This is an altered version,
+  plainly marked as such per clause 2 of the zlib/libpng license; it is not the
+  original libHaru (https://github.com/libharu/libharu). Original copyright and
+  license retained unchanged.
+
 Version 2.3.0 RC2 (2011.10.12)
 - Changed package naming, no other changes.
 

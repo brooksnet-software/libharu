@@ -1,7 +1,7 @@
 #define HPDF_MAJOR_VERSION 2
 #define HPDF_MINOR_VERSION 4
 #define HPDF_BUGFIX_VERSION 6
-#define HPDF_EXTRA_VERSION ""
+#define HPDF_EXTRA_VERSION "-brooks-utf8"
 
 #define hpdf_vquote(x) #x
 #define hpdf_vexp(x) hpdf_vquote(x)
