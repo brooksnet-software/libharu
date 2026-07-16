@@ -244,6 +244,9 @@ InitAttr (HPDF_FontDef  fontdef)
         if (attr->cmap.fmt12_start_gid)
             HPDF_FreeMem (fontdef->mmgr, attr->cmap.fmt12_start_gid);
 
+        if (attr->gid_cache)
+            HPDF_FreeMem (fontdef->mmgr, attr->gid_cache);
+
         if (attr->offset_tbl.table)
             HPDF_FreeMem (fontdef->mmgr, attr->offset_tbl.table);
 
@@ -1226,9 +1229,9 @@ ParseCMAP_format12  (HPDF_FontDef  fontdef,
 }
 
 
-HPDF_UINT16
-HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
-                            HPDF_UNICODE   unicode)
+static HPDF_UINT16
+GetGlyphidRaw  (HPDF_FontDef   fontdef,
+                HPDF_UNICODE   unicode)
 {
     HPDF_TTFontDefAttr attr = (HPDF_TTFontDefAttr)fontdef->attr;
     HPDF_UINT16 *pend_count = attr->cmap.end_count;
@@ -1305,6 +1308,43 @@ HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
             return gid;
         }
     }
+}
+
+
+/* Caching wrapper over GetGlyphidRaw. GetGlyphidRaw linear-scans the cmap
+ * segments on every call; memoize BMP results so a repeated character (the norm
+ * in large documents) costs one array lookup instead of a full scan. Non-BMP
+ * code points fall through uncached. The cmap is immutable after parse and the
+ * fontdef is single-threaded per document, so the memo needs no invalidation. */
+HPDF_UINT16
+HPDF_TTFontDef_GetGlyphid  (HPDF_FontDef   fontdef,
+                            HPDF_UNICODE   unicode)
+{
+    HPDF_TTFontDefAttr attr = (HPDF_TTFontDefAttr)fontdef->attr;
+
+    if (unicode <= 0xFFFF) {
+        HPDF_UINT16 gid;
+
+        if (!attr->gid_cache) {
+            attr->gid_cache = HPDF_GetMem (fontdef->mmgr,
+                    sizeof (HPDF_UINT16) * 0x10000);
+            if (attr->gid_cache)
+                /* 0xFF bytes => every entry 0xFFFF = "not yet computed" */
+                HPDF_MemSet (attr->gid_cache, 0xFF,
+                        sizeof (HPDF_UINT16) * 0x10000);
+        }
+
+        if (attr->gid_cache) {
+            gid = attr->gid_cache[unicode];
+            if (gid != 0xFFFF)
+                return gid;
+            gid = GetGlyphidRaw (fontdef, unicode);
+            attr->gid_cache[unicode] = gid;
+            return gid;
+        }
+    }
+
+    return GetGlyphidRaw (fontdef, unicode);
 }
 
 

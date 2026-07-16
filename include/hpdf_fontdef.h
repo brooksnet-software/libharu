@@ -320,6 +320,12 @@ typedef struct _HPDF_TTFontDefAttr_Rec {
     HPDF_BOOL                is_cidfont;
 
     HPDF_Stream              stream;
+
+    /* Lazily-allocated memo of GetGlyphid() results for BMP code points
+     * (index = unicode, 0x0000..0xFFFF; 0xFFFF = "not yet computed").
+     * GetGlyphid otherwise linear-scans the cmap segments on every call, which
+     * dominates rendering of large CJK documents. */
+    HPDF_UINT16             *gid_cache;
 } HPDF_TTFontDefAttr_Rec;
 
 
