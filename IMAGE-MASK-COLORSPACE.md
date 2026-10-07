@@ -1,8 +1,8 @@
 # Image masks must not have a ColorSpace
 
-A change to make in this fork: an image used as an image mask keeps the
-`/ColorSpace` it was loaded with, which the PDF specification doesn't allow.
-Adobe's viewers then draw nothing for the masked image.
+Fixed in this fork: an image used as an image mask kept the `/ColorSpace` it
+was loaded with, which the PDF specification doesn't allow. Adobe's viewers
+then draw nothing for the masked image.
 
 ## The problem
 
@@ -10,8 +10,8 @@ Adobe's viewers then draw nothing for the masked image.
 `image`. It calls `HPDF_Image_SetMask(mask, HPDF_TRUE)`
 (`src/hpdf_image.c`), which adds `/ImageMask true` to the mask, but the
 `/ColorSpace` that `HPDF_Image_LoadRaw1BitImageFromMem` (or
-`HPDF_LoadRawImageFromMem` with `HPDF_CS_DEVICE_GRAY`) put there stays.
-The mask comes out as:
+`HPDF_LoadRawImageFromMem` with `HPDF_CS_DEVICE_GRAY`) put there stayed.
+The mask came out as:
 
 ```
 << /Type /XObject /Subtype /Image
@@ -33,43 +33,16 @@ How viewers treat it:
 
 veraPDF (PDF/A-2b) doesn't report it, so PDF/A output can still be affected.
 
-Found in ExcelliPrint 5.0: overlays and page segments (1-bit images drawn as
-one pixel of their colour with the bits as the explicit mask) were missing in
-Adobe Reader. ExcelliPrint works around it in `pdfgen/PdfBackend.cpp`
-(`DrawMask`) by removing the key itself after `HPDF_Image_SetMaskImage`:
-
-```c
-HPDF_Dict_RemoveElement(mask, "ColorSpace");
-```
+A typical case is a 1-bit image drawn in a single colour: a one-pixel image
+of the colour, with the bits as its explicit mask. In Adobe Reader nothing
+appeared.
 
 ## The change
 
 In `src/hpdf_image.c`, `HPDF_Image_SetMask`: when an image becomes a mask,
-remove its colour space.
+its colour space is removed.
 
 ```c
-HPDF_STATUS
-HPDF_Image_SetMask (HPDF_Image   image,
-                    HPDF_BOOL    mask)
-{
-    HPDF_Boolean image_mask;
-
-    if (!HPDF_Image_Validate (image))
-        return HPDF_INVALID_IMAGE;
-
-    if (mask && HPDF_Image_GetBitsPerComponent (image) != 1)
-        return HPDF_SetError (image->error, HPDF_INVALID_BIT_PER_COMPONENT,
-                0);
-
-    image_mask = HPDF_Dict_GetItem (image, "ImageMask", HPDF_OCLASS_BOOLEAN);
-    if (!image_mask) {
-        HPDF_STATUS ret;
-        image_mask = HPDF_Boolean_New (image->mmgr, HPDF_FALSE);
-
-        if ((ret = HPDF_Dict_Add (image, "ImageMask", image_mask)) != HPDF_OK)
-            return ret;
-    }
-
     image_mask->value = mask;
 
     /* An image mask has no colour space (ISO 32000-1, 8.9.6.2) */
@@ -77,15 +50,15 @@ HPDF_Image_SetMask (HPDF_Image   image,
         HPDF_Dict_RemoveElement (image, "ColorSpace");
 
     return HPDF_OK;
-}
 ```
 
 `HPDF_Dict_RemoveElement` returns `HPDF_DICT_ITEM_NOT_FOUND` without raising
-an error when the key isn't there, so ignoring its result is safe.
+an error when the key isn't there, so ignoring its result is safe. It doesn't
+free indirect objects, so a shared colour space is left alone.
 
 ### What else reads the colour space
 
-Checked in this fork; none of these is affected:
+None of these is affected:
 
 - `HPDF_Image_SetColorMask` refuses an image that has `/ImageMask` before it
   looks at the colour space, so it never sees a mask.
@@ -97,18 +70,8 @@ Checked in this fork; none of these is affected:
 - Nothing in libHaru calls `HPDF_Image_SetMask(image, HPDF_FALSE)` after
   `HPDF_TRUE`. If something did, the image would have no colour space; such a
   caller would have to add one back.
-
-## Testing
-
-1. Rebuild the library (see `BUILD-windows.md`, Step 2).
-2. `demo/image_demo.c` uses `HPDF_Image_SetMaskImage`. Build and run it, then
-   check the mask object in the output has `/ImageMask true` and no
-   `/ColorSpace`, and the masked image shows in Adobe Reader.
-3. In ExcelliPrint, rebuild `_pdfgen.exe` against the new `hpdf.lib` and
-   render a page with an overlay or page segment (for example the rapids3
-   capture). Adobe Reader should show the overlay, and Ghostscript's
-   rendering should be unchanged.
-4. Optionally, run veraPDF on a PDF/A file with a mask; it should still pass.
+- A 1-bit indexed PNG used as a mask loses its palette. That is correct: the
+  bits are then stencil samples (0 paints), and the palette had no meaning.
 
 ## Related fix: CCITT images without image compression
 
@@ -120,11 +83,36 @@ no filter, so viewers decoded it as raw bits (garbage). The filter is now
 always set. The same function also dereferenced `image` after a failed load;
 it now returns NULL.
 
-## After the change
+## Testing
 
-The workaround in ExcelliPrint's `pdfgen/PdfBackend.cpp` (`DrawMask`, the
-`HPDF_Dict_RemoveElement(mask, "ColorSpace")` line) is then redundant. It
-does no harm and can be removed whenever convenient.
+1. Rebuild the library (see `BUILD-windows.md`, Step 2).
+2. Make an RGB image and a 1-bit mask, once with `HPDF_LoadRawImageFromMem`
+   (DeviceGray, 1 bit) and once with `HPDF_Image_LoadRaw1BitImageFromMem`,
+   and join them with `HPDF_Image_SetMaskImage`. (`demo/image_demo.c` does
+   the same with PNGs, but needs PNG support built in.)
+3. Save with compression off and with `HPDF_COMP_IMAGE` on. In both, each
+   mask object should have `/ImageMask true`, `/BitsPerComponent 1` and no
+   `/ColorSpace`; the CCITT one should have `/Filter [ /CCITTFaxDecode ]`.
+   Check with `mutool show file.pdf <obj>` or qpdf.
+4. The masked images should show in Adobe Reader, and render the same as
+   before in Ghostscript and mupdf.
+5. Optionally, run veraPDF on a PDF/A file with a mask; it should still pass.
 
-This could also go upstream (libharu/libharu on GitHub), if upstream's
-`HPDF_Image_SetMask` still leaves the colour space (not checked).
+## Applications that worked around it
+
+An application may already remove the key itself after
+`HPDF_Image_SetMaskImage`:
+
+```c
+HPDF_Dict_RemoveElement(mask, "ColorSpace");
+```
+
+With this fix that line is redundant. It does no harm and can be removed
+whenever convenient.
+
+## Upstream
+
+As of libHaru 2.4.6 (upstream `master`, March 2026), upstream has neither
+fix. Its unmerged `uncompressed_1bit` branch (2023) addresses the CCITT
+problem differently, by writing the bits uncompressed when compression is
+off.
