@@ -772,25 +772,26 @@ HPDF_Image_LoadRaw1BitImageFromMem  (HPDF_Doc           pdf,
     image = HPDF_Image_Load1BitImageFromMem(pdf->mmgr, buf, pdf->xref, width,
                 height, line_width, top_is_first);
 
-    if (!image)
+    if (!image) {
         HPDF_CheckError (&pdf->error);
+        return NULL;
+    }
 
-    if (pdf->compression_mode & HPDF_COMP_IMAGE)
-	{
-		image->filter = HPDF_STREAM_FILTER_CCITT_DECODE;
-		image->filterParams = HPDF_Dict_New(pdf->mmgr);
-		if(image->filterParams==NULL) {
-			return NULL;
-		}
-		
-		/* pure 2D encoding, default is 0 */
-		HPDF_Dict_AddNumber (image->filterParams, "K", -1);
-		/* default is 1728 */
-		HPDF_Dict_AddNumber (image->filterParams, "Columns", width);
-		/* default is 0 */
-		HPDF_Dict_AddNumber (image->filterParams, "Rows", height);
-		HPDF_Dict_AddBoolean (image->filterParams, "BlackIs1", black_is1);
+    /* The stream is always CCITT G4 encoded, so it must always say so,
+       whatever the document's compression mode. */
+	image->filter = HPDF_STREAM_FILTER_CCITT_DECODE;
+	image->filterParams = HPDF_Dict_New(pdf->mmgr);
+	if(image->filterParams==NULL) {
+		return NULL;
 	}
+
+	/* pure 2D encoding, default is 0 */
+	HPDF_Dict_AddNumber (image->filterParams, "K", -1);
+	/* default is 1728 */
+	HPDF_Dict_AddNumber (image->filterParams, "Columns", width);
+	/* default is 0 */
+	HPDF_Dict_AddNumber (image->filterParams, "Rows", height);
+	HPDF_Dict_AddBoolean (image->filterParams, "BlackIs1", black_is1);
 
     return image;
 }
