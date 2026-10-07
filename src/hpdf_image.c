@@ -549,6 +549,11 @@ HPDF_Image_SetMask (HPDF_Image   image,
     }
 
     image_mask->value = mask;
+
+    /* An image mask has no colour space (ISO 32000-1, 8.9.6.2) */
+    if (mask)
+        HPDF_Dict_RemoveElement (image, "ColorSpace");
+
     return HPDF_OK;
 }
 
