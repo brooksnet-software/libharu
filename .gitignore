@@ -64,3 +64,16 @@ depcomp
 /win32/ZERO_CHECK.vcxproj.filters
 /win32/libharu.sln
 /win32/src/
+
+# AI coding agent local folders (per-machine, not for the repo)
+.claude/
+.codex/
+.gemini/
+.cursor/
+.windsurf/
+.continue/
+.amazonq/
+.junie/
+.kiro/
+.opencode/
+.aider*
