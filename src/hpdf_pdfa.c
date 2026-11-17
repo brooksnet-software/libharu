@@ -151,6 +151,42 @@ HPDF_PDFA_SetPDFAConformance (HPDF_Doc pdf, HPDF_PDFAType pdfatype)
     return HPDF_OK;
 }
 
+/* Write text as XML character data: &, <, > and " as entities, and the
+ * control characters XML 1.0 doesn't allow (all below 0x20 but tab, LF and
+ * CR) left out.  The info dictionary's values are written with this, or a
+ * title like "Smith & Sons" makes the metadata invalid XML. */
+static HPDF_STATUS
+WriteXmlText (HPDF_Stream  stream,
+              const char  *text)
+{
+    const char *run = text;
+    const char *p;
+    HPDF_STATUS ret = HPDF_OK;
+
+    for (p = text; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        const char *entity = NULL;
+
+        switch (c) {
+            case '&': entity = "&amp;";  break;
+            case '<': entity = "&lt;";   break;
+            case '>': entity = "&gt;";   break;
+            case '"': entity = "&quot;"; break;
+            default:
+                if (c >= 0x20 || c == '\t' || c == '\n' || c == '\r')
+                    continue;
+                entity = "";            /* not allowed in XML: dropped */
+        }
+        if (p > run)
+            ret += HPDF_Stream_Write (stream, (const HPDF_BYTE *)run, (HPDF_UINT)(p - run));
+        ret += HPDF_Stream_WriteStr (stream, entity);
+        run = p + 1;
+    }
+    if (p > run)
+        ret += HPDF_Stream_Write (stream, (const HPDF_BYTE *)run, (HPDF_UINT)(p - run));
+    return ret;
+}
+
 /* Add XMP Metadata for PDF/A */
 HPDF_STATUS
 HPDF_PDFA_AddXmpMetadata(HPDF_Doc pdf)
@@ -229,19 +265,19 @@ HPDF_PDFA_AddXmpMetadata(HPDF_Doc pdf)
 
             if(dc_title != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_TITLE_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, dc_title);
+                ret += WriteXmlText(xmp->stream, dc_title);
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_TITLE_ENDTAG);
             }
 
             if(dc_creator != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_CREATOR_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, dc_creator);
+                ret += WriteXmlText(xmp->stream, dc_creator);
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_CREATOR_ENDTAG);
             }
 
             if(dc_description != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_DESCRIPTION_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, dc_description);
+                ret += WriteXmlText(xmp->stream, dc_description);
                 ret += HPDF_Stream_WriteStr(xmp->stream, DC_DESCRIPTION_ENDTAG);
             }
 
@@ -255,7 +291,7 @@ HPDF_PDFA_AddXmpMetadata(HPDF_Doc pdf)
             /* Add CreateDate, ModifyDate, and CreatorTool */
             if(xmp_CreatorTool != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, XMP_CREATORTOOL_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, xmp_CreatorTool);
+                ret += WriteXmlText(xmp->stream, xmp_CreatorTool);
                 ret += HPDF_Stream_WriteStr(xmp->stream, XMP_CREATORTOOL_ENDTAG);
             }
 
@@ -281,13 +317,13 @@ HPDF_PDFA_AddXmpMetadata(HPDF_Doc pdf)
 
             if(pdf_Keywords != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, PDF_KEYWORDS_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, pdf_Keywords);
+                ret += WriteXmlText(xmp->stream, pdf_Keywords);
                 ret += HPDF_Stream_WriteStr(xmp->stream, PDF_KEYWORDS_ENDTAG);
             }
 
             if(pdf_Producer != NULL) {
                 ret += HPDF_Stream_WriteStr(xmp->stream, PDF_PRODUCER_STARTTAG);
-                ret += HPDF_Stream_WriteStr(xmp->stream, pdf_Producer);
+                ret += WriteXmlText(xmp->stream, pdf_Producer);
                 ret += HPDF_Stream_WriteStr(xmp->stream, PDF_PRODUCER_ENDTAG);
             }
 
