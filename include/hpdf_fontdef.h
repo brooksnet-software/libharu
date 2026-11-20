@@ -362,6 +362,12 @@ HPDF_TTFontDef_GetGidWidth  (HPDF_FontDef   fontdef,
                              HPDF_UINT16    gid);
 
 
+/* Exact advance width in 1/1000 em (not truncated to an integer). */
+HPDF_REAL
+HPDF_TTFontDef_GetGidWidthReal  (HPDF_FontDef   fontdef,
+                                 HPDF_UINT16    gid);
+
+
 HPDF_STATUS
 HPDF_TTFontDef_SaveFontData  (HPDF_FontDef   fontdef,
                               HPDF_Stream    stream);

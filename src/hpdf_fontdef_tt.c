@@ -1502,6 +1502,20 @@ HPDF_TTFontDef_GetGidWidth  (HPDF_FontDef   fontdef,
 }
 
 
+HPDF_REAL
+HPDF_TTFontDef_GetGidWidthReal  (HPDF_FontDef   fontdef,
+                                 HPDF_UINT16    gid)
+{
+    HPDF_TTFontDefAttr attr = (HPDF_TTFontDefAttr)fontdef->attr;
+
+    if (gid >= attr->num_glyphs)
+        return (HPDF_REAL)fontdef->missing_width;
+
+    return (HPDF_REAL)((HPDF_DOUBLE)attr->h_metric[gid].advance_width * 1000.0 /
+            attr->header.units_per_em);
+}
+
+
 
 static HPDF_STATUS
 ParseHmtx  (HPDF_FontDef  fontdef)

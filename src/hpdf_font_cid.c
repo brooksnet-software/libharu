@@ -688,9 +688,14 @@ CreateGidWidths  (HPDF_Font      descendant,
     if ((ret = HPDF_Dict_Add (descendant, "W", array)) != HPDF_OK)
         return ret;
 
+    /* Widths are rounded to the nearest 1/1000 em, not truncated: viewers
+     * place every glyph by these numbers, and truncation makes a line of
+     * text come out short by up to ~0.1% of its length.  Whole numbers, as
+     * some viewers (PDFium) read W entries as integers. */
     for (i = 0; i < num_glyphs; i++) {
         if (flgs[i]) {
-            HPDF_INT16 w = HPDF_TTFontDef_GetGidWidth (fontdef, (HPDF_UINT16)i);
+            HPDF_INT32 w = (HPDF_INT32)(HPDF_TTFontDef_GetGidWidthReal (fontdef,
+                                (HPDF_UINT16)i) + 0.5f);
 
             if (w != dw) {
                 if (!sub_array) {
